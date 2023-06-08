@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$/spring-step-01">
+      <sourceFolder url="file://$MODULE_DIR$/spring-step-01/src/main/java" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/spring-step-01/src/main/java/cn/bugstack/springframework" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/spring-step-01/src/main/resources" type="java-resource" />
+      <sourceFolder url="file://$MODULE_DIR$/spring-step-01/src/test" isTestSource="true" />
+    </content>
+  </component>
+</module>
