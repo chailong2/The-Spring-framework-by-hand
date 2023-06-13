@@ -1,8 +1,10 @@
 package springframework;
 
 import org.junit.Test;
-import springframework.bean.Userservice;
+import springframework.bean.UserDao;
+import springframework.bean.userService;
 import springframework.factory.config.BeanDefinition;
+import springframework.factory.config.BeanReference;
 import springframework.factory.support.BeanDefinitionRegistry;
 import springframework.factory.support.DefaultListableBeanFactory;
 
@@ -14,21 +16,21 @@ import java.lang.reflect.Method;
  */
 public class ApiTest {
     @Test
-    public void test_BeanFactory(){
-        //1. 初始化BeanFactory
+    public void test_BeanFactory() throws BeansException {
+        //初始化BeanFactory接口
         DefaultListableBeanFactory beanFactory=new DefaultListableBeanFactory();
-        //2. 注册Bean对象
-        BeanDefinition beanDefinition=new BeanDefinition(Userservice.class);
-        /*注册BeanDefinition*/
+        //注册UserDao
+        beanFactory.registerBeanDefinition("userDao",new BeanDefinition(UserDao.class));
+        //使用userService填充属性
+        PropertyValues propertyValues=new PropertyValues();
+        propertyValues.addPropertyValue(new PropertyValue("uId","10001"));
+        propertyValues.addPropertyValue(new PropertyValue("userDao",new BeanReference("userDao")));
+        //使用userService注册Bean对象
+        BeanDefinition beanDefinition=new BeanDefinition(userService.class,propertyValues);
         beanFactory.registerBeanDefinition("userService",beanDefinition);
-        //3. 获取Bean对象
-        Userservice userservice= null;
-        try {
-            userservice = (Userservice) beanFactory.getBean("userService","jakiechai");
-        } catch (BeansException e) {
-            throw new RuntimeException(e);
-        }
-        userservice.queryUserInfo();
+        //使用userServices获取Bean对象
+        userService userService=(userService) beanFactory.getBean("userService");
+        userService.queryUserInfo();
     }
 }
 

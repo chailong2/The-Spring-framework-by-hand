@@ -1,8 +1,8 @@
 package springframework.bean;
 
-public class Userservice {
+public class userService {
     private String name;
-    public Userservice(String name){
+    public userService(String name){
         this.name=name;
     }
     public void queryUserInfo(){

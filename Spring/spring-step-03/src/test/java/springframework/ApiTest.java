@@ -1,7 +1,7 @@
 package springframework;
 
 import org.junit.Test;
-import springframework.bean.Userservice;
+import springframework.bean.userService;
 import springframework.factory.config.BeanDefinition;
 import springframework.factory.support.BeanDefinitionRegistry;
 import springframework.factory.support.DefaultListableBeanFactory;
@@ -18,17 +18,17 @@ public class ApiTest {
         //1. 初始化BeanFactory
         DefaultListableBeanFactory beanFactory=new DefaultListableBeanFactory();
         //2. 注册Bean对象
-        BeanDefinition beanDefinition=new BeanDefinition(Userservice.class);
+        BeanDefinition beanDefinition=new BeanDefinition(userService.class);
         /*注册BeanDefinition*/
         beanFactory.registerBeanDefinition("userService",beanDefinition);
         //3. 获取Bean对象
-        Userservice userservice= null;
+        userService userService= null;
         try {
-            userservice = (Userservice) beanFactory.getBean("userService","jakiechai");
+            userService = (userService) beanFactory.getBean("userService","jakiechai");
         } catch (BeansException e) {
             throw new RuntimeException(e);
         }
-        userservice.queryUserInfo();
+        userService.queryUserInfo();
     }
 }
 

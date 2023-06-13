@@ -1508,7 +1508,61 @@ public abstract class AbstractAutowireCapableBeanFactory extends AbstractBeanFac
 }
 ```
 
+**测试**
 
+> 事先准备
+
+```java
+public class UserDao {
+    private static Map<String,String> hashmap=new HashMap<>();
+    static {
+        hashmap.put("10001","张三");
+        hashmap.put("10002","李四");
+        hashmap.put("10003","王五");
+    }
+    public String queryUserName(String uId){
+        return hashmap.get(uId);
+    }
+}
+```
+
+```java
+public class Userservice {
+    private String uId;
+    private UserDao userDao;
+    public void queryUserInfo(){
+        System.out.println("查询用户信息："+userDao.queryUserName(uId));
+    }
+}
+```
+
+Dao、Service是开发时经常使用的场景，如果在UserService中注册UserDao，就体现出了Bean对象的依赖关系
+
+> 测试实例
+
+```java
+public class ApiTest {
+    @Test
+    public void test_BeanFactory() throws BeansException {
+        //初始化BeanFactory接口
+        DefaultListableBeanFactory beanFactory=new DefaultListableBeanFactory();
+        //注册UserDao
+        beanFactory.registerBeanDefinition("userDao",new BeanDefinition(UserDao.class));
+        //使用UserService填充属性
+        PropertyValues propertyValues=new PropertyValues();
+        propertyValues.addPropertyValue(new PropertyValue("uId","10001"));
+        propertyValues.addPropertyValue(new PropertyValue("userDao",new BeanReference("userDao")));
+        //使用UserService注册Bean对象
+        BeanDefinition beanDefinition=new BeanDefinition(Userservice.class,propertyValues);
+        beanFactory.registerBeanDefinition("userService",beanDefinition);
+        //使用UserServices获取Bean对象
+        Userservice userservice=(Userservice) beanFactory.getBean("userService");
+        userservice.queryUserInfo();
+    }
+}
+```
+
+![](./img/4-3.png)
 
 ## 4. Spring相关源码解析
 
@@ -1724,4 +1778,794 @@ public abstract class AbstractAutowireCapableBeanFactory extends AbstractBeanFac
 	}
 }
 ```
+
+# 五、资源加载器解析文件注册对象
+
+## 1. 本节重点
+
+定义用于解析XML文件的XmlBeanDefinitionReader类，处理用于配置在XML文件中的Bean对象信息，完成自动配置和注册Bean对象
+
+## 2. 对象创建问题
+
+在完成Spring框架的雏形后，我们可以通过单元测试，手动完成Bean对象的定义、注册和属性填充，以及获取对象调用的方法。但在实际的使用过程中，是不太可能让用户通过手动创建对象的，而是通过Spring配置文件来简化创建过程，具体需要完成下面动作 。首先我们需要将步骤2、步骤3、步骤4整合到Spring框架中，通过Spring配置文件将Bean对象实例化。然后在现在的Spring框架中添加能实现Spring配置文件的读取、解析和Bean对象注册。
+
+![](./img/5-1.jpg)
+
+## 3. 资源加载和解析设计
+
+我们需要在现有的Spring框架中添加一个资源加载器，用于读取ClassPath、本地文件和远程云文件（HTTP）的配置内容。这些配置内容包括Bean对象的描述信息和属性信息，当读取配置文件中的内容后，就可以先见配置文件中的Bean描述信息解析再注册，将bean对象注册到Spring Bean容器中。整体设计架构如下图所示：
+
+![](./img/5-2.jpg)
+
+- 资源加载器属于相对独立的部分，位于Spring框架核心包下，主要用于读取ClassPath、本地文件（File）和远程云文件（HTTP文件）
+- 资源加载后，接下来就是将Bean对象解析并注册到Spring框架中，这部分需要和DefaultListableBeanFactory核心类结合起来实现，因为所有解析后的注册动作，都会将Bean对象的定义信息放入到DefaultListableBeanFactopry类中。
+- 在实现时，需要设计好接口的层级关系，包括对Bean对象的读取接口BeanDefinitionReader的定义，以及设计好对应的实现类，在实现类中完成对Bean对象的解析和注册
+
+## 4. 资源加载和解析设计实现
+
+![](./img/5-3.png)
+
+为了将Bean对象的定义、注册和初始化交给Spring.xml配置文件进行处理，需要实现两部分—资源加载器、XML资源处理类。其实现过程主要是对Resource接口、ResourceLoader接口的实现，此外BeanDefinitionReader接口是对资源的具体使用，其功能是将配置信息注册到SpringBean容器中。在Resource资源加载器的实现中，包括ClassPath、本地文件（File）、远程云文件（HTTP文件），这3部分于Spring源码中的设计和实现保持基本一致，最终都会在DefaultResourceLoader中调用。BeanDefinitionReader接口、AbstractBeanDefinitionReader抽象类、XmlBeanDefinitionReader实现类合理、清晰地处理了资源读取后Bean对象的操作。BeanFactory是已经存在的Bean工厂接口 ，用于获取Bean对象，并增加了按照类型获取Bean对象的方法`<T> T getBean(String name, Class<T> requiredType)`。ListableBeanFactory是一个接口，其功能是扩展Bean工厂接口，该接口中新增了`getBeansOfType()`方法、`getBeanDefinitionNames()`方法。在Spring源码中，HierarchicalBeanFacotry是一个扩展Bean工厂层次的子接口，提供了可以获取父类BeanFacotry的方法。AutowireCapableBeanFactory是一个自动化处理Bean工厂配置的接口，目前在实际中还没有完成相应的实现，后续还会逐步完善。ConfigurableBeanFactory是一个可以获取BeanPostProcessor、BeanClassLoader等方法的配置化接口。ConfigurableListableBeanFactory是一个提供分析和修改Bean对象与预先的接口，不过目前我们只实现了getBeanFactory方法。
+
+![](./img/5-4.png) 
+
+**资源加载接口的实现和定义**
+
+![](./img/5-5.png)
+
+```java
+public interface Resource {
+    InputStream getInputStream() throws IOException;
+}
+```
+
+在Spring框架下的core.io核心包，主要用于处理资源加载流，首先先定义了Resource接口，提供获取InputStream流的方法，然后分别实现3种不同的流文件—ClassPath、FileSystem和URL
+
+```java
+public class ClassPathResource implements Resource{
+    //把资源的路径信息定义为常量
+    private final String path;
+    //定义类加载器
+    private ClassLoader classLoader;
+
+    public ClassPathResource(String path) {
+        this(path,(ClassLoader)null);
+    }
+
+    public ClassPathResource(String path, ClassLoader classLoader) {
+        //判断路径参数是否为空
+        Assert.notNull(path,"Path must not be null");
+        this.path=path;
+        this.classLoader=(classLoader !=null ? classLoader: ClassUtils.getDefaultClassLoader());
+    }
+
+    @Override
+    public InputStream getInputStream() throws IOException {
+        //使用类加载器加载资源（转换为流）
+        InputStream is=classLoader.getResourceAsStream(path);
+        if(is ==null){
+            throw new FileNotFoundException(
+                    this.path+" connot be opened because it does not exist"
+            );
+        }
+        return is;
+    }
+}
+```
+
+这部分是通过ClassLoader读取ClassPath中的文件信息实现的，具体的读取命令是classLoader.getResourceAsStream(path)
+
+```java
+public class FileSystemResource implements Resource {
+    //定义一个文件对象
+    private final File file;
+    //定义文件路径
+    private final String path;
+
+    public FileSystemResource(File file){
+        this.file=file;
+        this.path=file.getPath();
+    }
+    public FileSystemResource(String path){
+        this.file=new File(path);
+        this.path=path;
+    }
+    public final String getPath(){
+        return this.path;
+    }
+    @Override
+    public InputStream getInputStream() throws IOException {
+        return new FileInputStream(this.file);
+    }
+}
+```
+
+通过指定文件的路径的方式读取文件信息时会读取到一些TXT文件和Excel文件，将这些文件输出到控制台
+
+```java
+public class UrlResource implements Resource{
+    private final URL url;
+    
+    public UrlResource(URL url){
+        Assert.notNull(url,"URL must bot be null");
+        this.url=url;
+    }
+    @Override
+    public InputStream getInputStream() throws IOException {
+        //与指定的URL资源建立TCP连接
+        URLConnection con=this.url.openConnection();
+        try{
+            //打开流，获取文件内容
+            return con.getInputStream();
+        }catch (IOException ex){
+            if(con instanceof HttpURLConnection){
+                //断开连接
+                ((HttpURLConnection)con).disconnect();
+            }
+            throw ex;
+        }
+    }
+}
+```
+
+可以通过HTTP 读取远程文件（HTTP文件），也可以将配置文件放到github或gitee平台中获取
+
+**包装资源加载器**
+
+资源加载的方式有多种，资源加载器可以将这些方式放到统一的类服务下进行处理，外部用户只需要传递资源地址
+
+```java
+public interface ResourceLoader {
+    //文件资源位置标识的前缀
+    String CLASSPATH_URL_PREFIX="classpath:";
+    //获取资源
+    Resource getResource(String location);
+}
+```
+
+定义获取资源的接口，在接口中传递资源地址
+
+```java
+public class DefaultResourceLoader implements ResourceLoader{
+    @Override
+    public Resource getResource(String location) {
+        Assert.notNull(location,"Location must bot be null");
+        //如果地址是以我们指定的前缀开头的
+        if(location.startsWith(CLASSPATH_URL_PREFIX)){
+            //使用ClassPathResource对象来解析Classpath类型的资源
+            return new ClassPathResource(location.substring(CLASSPATH_URL_PREFIX.length()));
+        }else{
+            try {
+                //如果locatino不是ClassPath，则为网络资源
+                URL url=new URL(location);
+                return new UrlResource(url);
+            } catch (MalformedURLException e) {
+                //如果两者都不是就是系统文件资源
+                return new FileSystemResource(location);
+            }
+        }
+    }
+}
+```
+
+在获取资源的过程中，主要对3种不同类型的资源处理方式，分别判断为ClassPath、FileSystem或URL文件。DefaultResourceLoader类的实现很简单，不会让外部调用方知道过多的细节，仅仅关心调用结果即可
+
+**Bean对象定义读取接口**
+
+```java
+public interface BeanDefinitionReader {
+    //获得BeanDefinitionRegistry用来注册BeanDefinition
+    BeanDefinitionRegistry getRegistry();
+    //获取ResourceLoader用来加载资源
+    ResourceLoader getResourceLoader();
+    //这三个方法都是用来加载Bean定义的。其中，第一个方法通过Resource对象来加载Bean定义，
+    // 第二个方法通过Resource数组来加载Bean定义，第三个方法通过字符串类型的资源位置来加载Bean定义。
+    // 如果加载Bean定义时出现问题，会抛出BeansException异常。
+    void loadBeanDefinitions(Resource resource)throws BeansException;
+    void loadBeanDefinitions(Resource... resources)throws BeansException;
+    void loadBeanDefinitions(String location)throws BeansException;
+}
+```
+
+这是一个用于读取Bean对象定义的接口，其中定义了几个方法，如getRegistry方法、getResourceLoader方法以及3个加载Bean对象定义的方法。这里需要注意的是getRegistry方法，getResourceLoader方法，它们都为加载Bean对象定义的方法提供了工具，这两个方法的实现会被包装到抽象类中，以免与具体的接口实现方法产生冲突。
+
+**Bean定义抽象类实现**
+
+```java
+public abstract class AbstractBeanDefinitionReader implements BeanDefinitionReader {
+    private final BeanDefinitionRegistry beanDefinitionRegistry;
+    private ResourceLoader resourceLoader;
+    
+    protected AbstractBeanDefinitionReader(BeanDefinitionRegistry registry){
+        this(registry,new DefaultResourceLoader());
+    }
+    public AbstractBeanDefinitionReader(BeanDefinitionRegistry registry,ResourceLoader resourceLoader){
+        this.beanDefinitionRegistry=registry;
+        this.resourceLoader=resourceLoader;
+    }
+
+    @Override
+    public BeanDefinitionRegistry getRegistry() {
+        return beanDefinitionRegistry;
+    }
+
+    @Override
+    public ResourceLoader getResourceLoader() {
+        return resourceLoader;
+    }
+}
+```
+
+抽象类实现了BeanDefinitionReader接口的前两个方法，并提供了构造函数。此时外部调用将Bean对象的定义注入并传递到类中。这样在BeanDefinitionReader接口的具体实现类中，就可以将解析后的XML文件中的Bean对象信息注册到Spring Bean容器中。在之前的单元测试中，我们通过调用BeanDefinitionRegistry完成了Bean对象的注册，现在可以放到XML文件中了
+
+**解析XML处理Bean注册**
+
+```java
+public class XmlBeanDefinitionReader extends AbstractBeanDefinitionReader {
+    public XmlBeanDefinitionReader(BeanDefinitionRegistry registry){
+        super(registry);
+    }
+    public XmlBeanDefinitionReader(BeanDefinitionRegistry registry, ResourceLoader resourceLoader){
+        super(registry,resourceLoader);
+    }
+
+    @Override
+    public void loadBeanDefinitions(Resource resource) throws BeansException {
+        try {
+            try (InputStream inputStream=resource.getInputStream()){
+                //注册beanDefition
+               doLoadBeanDefinitions(inputStream);
+            }
+        }catch(IOException | ClassNotFoundException | ParserConfigurationException | SAXException e){
+            throw  new BeansException("IOException parsing XML document form"+resource,e);
+        }
+    }
+
+    @Override
+    public void loadBeanDefinitions(Resource... resources) throws BeansException {
+        for(Resource resource: resources){
+            loadBeanDefinitions(resource);
+        }
+    }
+
+    @Override
+    public void loadBeanDefinitions(String location) throws BeansException {
+        ResourceLoader resourceLoader=getResourceLoader();
+        Resource resource=resourceLoader.getResource(location);
+        loadBeanDefinitions(resource);
+
+    }
+    public void doLoadBeanDefinitions(InputStream inputStream)
+            throws ParserConfigurationException, SAXException, IOException, ClassNotFoundException, BeansException {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document doc = builder.parse(inputStream);
+
+        NodeList beanNodes = doc.getElementsByTagName("bean");
+        for (int i = 0; i < beanNodes.getLength(); i++) {
+            Node beanNode = beanNodes.item(i);
+            if (beanNode.getNodeType() == Node.ELEMENT_NODE) {
+                Element beanElement = (Element) beanNode;
+                String id = beanElement.getAttribute("id");
+                String name = beanElement.getAttribute("name");
+                String className = beanElement.getAttribute("class");
+                Class<?> clazz = Class.forName(className);
+
+                String beanName = id.isEmpty() ? name : id;
+                if (beanName.isEmpty()) {
+                    beanName = Character.toLowerCase(clazz.getSimpleName().charAt(0)) + clazz.getSimpleName().substring(1);
+                }
+
+                BeanDefinition beanDefinition = new BeanDefinition(clazz);
+                NodeList propertyNodes = beanElement.getElementsByTagName("property");
+                for (int j = 0; j < propertyNodes.getLength(); j++) {
+                    Node propertyNode = propertyNodes.item(j);
+                    if (propertyNode.getNodeType() == Node.ELEMENT_NODE) {
+                        Element propertyElement = (Element) propertyNode;
+                        String attrName = propertyElement.getAttribute("name");
+                        String attrValue = propertyElement.getAttribute("value");
+                        String attrRef = propertyElement.getAttribute("ref");
+                        Object value = attrRef.isEmpty() ? attrValue : new BeanReference(attrRef);
+                        PropertyValue propertyValue = new PropertyValue(attrName, value);
+                        beanDefinition.getPropertyValues().addPropertyValue(propertyValue);
+                    }
+                }
+                if (getRegistry().containsBeanDefinition(beanName)) {
+                    throw new BeansException("Duplicate beanName[" + beanName + "] is not allowed");
+                }
+                getRegistry().registerBeanDefinition(beanName, beanDefinition);
+            }
+        }
+    }
+}
+```
+
+XmlBeanDefinitionReader类最核心的内容就是对XML文件的解析，通过解析XML文件，自动注册的方式来实现。loadBeanDefinitions方法用于处理资源加载。这里新增来一个内部方法，doLoadBeanDefinitions，其主要功能就是解析Xml文件。doLoadBeanDefinitions方法主要是对XML文件进行读取和对Element元素进行解析。在解析的过程中，我们循环获取Bean对象的配置，以及配置中的id、name、class和ref信息。先将读取出来的配置信息创建成BeanDefinition及PropertyValues，再将完整的Bean定义内容注册到Spring Bean容器中。
+
+**测试**
+
+> 实现准备
+
+```java
+public class UserDao {
+    private static Map<String,String> hashmap=new HashMap<>();
+    static {
+        hashmap.put("10001","张三");
+        hashmap.put("10002","李四");
+        hashmap.put("10003","王五");
+    }
+    public String queryUserName(String uId){
+        return hashmap.get(uId);
+    }
+}
+
+```
+
+```java
+public class Userservice {
+    private String uId;
+    private UserDao userDao;
+    public void queryUserInfo(){
+        System.out.println("查询用户信息："+userDao.queryUserName(uId));
+    }
+
+    public String getuId() {
+        return uId;
+    }
+
+    public void setuId(String uId) {
+        this.uId = uId;
+    }
+
+    public UserDao getUserDao() {
+        return userDao;
+    }
+
+    public void setUserDao(UserDao userDao) {
+        this.userDao = userDao;
+    }
+}
+```
+
+Dao和service是开发时经常会用到的类，在UserService中注入UserDao，就能体现出Bean属性的依赖
+
+> 配置文件
+
+```properties
+#filename：important.properties
+# config File
+system.key=OLpj9823dZ
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<beans>
+    <bean id="userDao" class="springframework.bean.UserDao"/>
+    <bean id="userservice" class="springframework.bean.Userservice">
+        <property name="uId" value="10001"></property>
+        <property name="userDao" ref="userDao"></property>
+    </bean>
+</beans>
+```
+
+> 单元测试（资源加载）
+
+```java
+public class ApiTest {
+    private DefaultResourceLoader resourceLoader;
+    @Before
+    public void init(){
+        resourceLoader=new DefaultResourceLoader();
+    }
+    @Test
+    public void test_classpath()throws IOException{
+        Resource resource=resourceLoader.getResource("classpath:important.properties");
+        InputStream inputStream=resource.getInputStream();
+        String content= IoUtil.readUtf8(inputStream);
+        System.out.println(content);
+    }
+    @Test
+    public void test_url()throws IOException{
+        Resource resource=resourceLoader.getResource("github地址");
+        InputStream inputStream=resource.getInputStream();
+        String content=IoUtil.readUtf8(inputStream);
+        System.out.println(content);
+    }
+    @Test
+    public void test_file() throws IOException{
+        Resource resource=resourceLoader.getResource("src/test/resources/important.properties");
+        InputStream inputStream=resource.getInputStream();
+        String content=IoUtil.readUtf8(inputStream);
+        System.out.println(content);
+    }
+}
+```
+
+![](./img/5-6.png)
+
+> 单元测试（读取配置文件并加载bean）
+
+```java
+public class ApiTest {
+    @Test
+    public void test_xml() throws BeansException {
+        //初始化BeanFactory接口
+        DefaultListableBeanFactory beanFactory=new DefaultListableBeanFactory();
+
+        //读取配置文件注册bean对象
+        XmlBeanDefinitionReader reader=new XmlBeanDefinitionReader(beanFactory);
+        reader.loadBeanDefinitions("classpath:spring.xml");
+
+        //获取bean对象的调用方法
+        Userservice userservice= (Userservice) beanFactory.getBean("userservice",Userservice.class);
+        userservice.queryUserInfo();
+    }
+}
+```
+
+![](./img/5-7.png)
+
+## 5. Spring相关源码解析
+
+**Resource**
+
+```java
+public interface Resource extends InputStreamSource {
+  //确定此资源是否以物理形式实际存在
+	boolean exists();
+  //这段代码的作用是返回一个布尔值，用于判断当前对象是否可读。如果该对象存在，则返回true，否则返回false
+	default boolean isReadable() {
+		return exists();
+	}
+  //返回一个布尔值判断文件是否可以打开
+	default boolean isOpen() {
+		return false;
+	}
+  //判断指定的资源是否是一个文件资源
+	default boolean isFile() {
+		return false;
+	}
+  //获得统一资源定位符
+	URL getURL() throws IOException;
+  //统一资源标识符
+	URI getURI() throws IOException;
+  //获得文件
+	File getFile() throws IOException;
+	default ReadableByteChannel readableChannel() throws IOException {
+		return Channels.newChannel(getInputStream());
+	}
+  //获得资源文件的长度
+	long contentLength() throws IOException;
+  //获得资源文件的上一次修改时间
+	long lastModified() throws IOException;
+  //该方法的目的是创建一个新的 Resource 对象，该对象表示相对于当前资源的资源。 relativePath 参数指定了新资源相对于当前资源的路径
+	Resource createRelative(String relativePath) throws IOException;
+	@Nullable
+  //获得文件名
+	String getFilename();
+  //获得文件的描述信息
+	String getDescription();
+
+}
+```
+
+**ClassPathResource**
+
+```java
+public class ClassPathResource extends AbstractFileResolvingResource {
+  private final String path;
+	@Nullable
+	private ClassLoader classLoader;
+  
+  public ClassPathResource(String path) {
+		this(path, (ClassLoader) null);
+	}
+  
+  public ClassPathResource(String path, @Nullable ClassLoader classLoader) {
+		Assert.notNull(path, "Path must not be null");
+		String pathToUse = StringUtils.cleanPath(path);
+		if (pathToUse.startsWith("/")) {
+			pathToUse = pathToUse.substring(1);
+		}
+		this.path = pathToUse;
+    //这段代码的作用是初始化一个类加载器（ClassLoader）对象。如果传入的classLoader不为空，则使用传入的类加载器对象；否则，使用 ClassUtils.getDefaultClassLoader()方法获取默认的类加载器对象。该类加载器对象可以用于加载指定类的字节码文件，以便在程序中使用该类。
+		this.classLoader = (classLoader != null ? classLoader : ClassUtils.getDefaultClassLoader());
+	}
+  public final String getPath() {
+		return this.path;
+	}
+  @Nullable
+	public final ClassLoader getClassLoader() {
+		return (this.clazz != null ? this.clazz.getClassLoader() : this.classLoader);
+	}
+  @Override
+	public boolean exists() {
+		return (resolveURL() != null);
+	}
+	@Nullable
+	protected URL resolveURL() {
+		if (this.clazz != null) {
+			return this.clazz.getResource(this.path);
+		}
+		else if (this.classLoader != null) {
+			return this.classLoader.getResource(this.path);
+		}
+		else {
+			return ClassLoader.getSystemResource(this.path);
+		}
+	}
+  @Override
+	public InputStream getInputStream() throws IOException {
+		InputStream is;
+		if (this.clazz != null) {
+			is = this.clazz.getResourceAsStream(this.path);
+		}
+		else if (this.classLoader != null) {
+			is = this.classLoader.getResourceAsStream(this.path);
+		}
+		else {
+			is = ClassLoader.getSystemResourceAsStream(this.path);
+		}
+		if (is == null) {
+			throw new FileNotFoundException(getDescription() + " cannot be opened because it does not exist");
+		}
+		return is;
+	}
+}
+```
+
+**FileSysremResource**
+
+```java
+public class FileSystemResource extends AbstractResource implements WritableResource {
+  private final String path;
+	@Nullable
+	private final File file;
+	private final Path filePath;
+  public FileSystemResource(String path) {
+		Assert.notNull(path, "Path must not be null");
+		this.path = StringUtils.cleanPath(path);
+		this.file = new File(path);
+		this.filePath = this.file.toPath();
+	}
+  @Override
+	public InputStream getInputStream() throws IOException {
+		try {
+			return Files.newInputStream(this.filePath);
+		}
+		catch (NoSuchFileException ex) {
+			throw new FileNotFoundException(ex.getMessage());
+		}
+	}
+}
+```
+
+**UrlResource**
+
+```java
+public class UrlResource extends AbstractFileResolvingResource {
+  @Nullable
+	private final URI uri;
+  private final URL url;
+  	public UrlResource(URI uri) throws MalformedURLException {
+		Assert.notNull(uri, "URI must not be null");
+		this.uri = uri;
+		this.url = uri.toURL();
+	}
+  @Override
+	public InputStream getInputStream() throws IOException {
+		URLConnection con = this.url.openConnection();
+		ResourceUtils.useCachesIfNecessary(con);
+		try {
+			return con.getInputStream();
+		}
+		catch (IOException ex) {
+			// Close the HTTP connection (if applicable).
+			if (con instanceof HttpURLConnection) {
+				((HttpURLConnection) con).disconnect();
+			}
+			throw ex;
+		}
+	}
+}
+```
+
+**ResourceLoader**
+
+```java
+public interface ResourceLoader {
+  String CLASSPATH_URL_PREFIX = ResourceUtils.CLASSPATH_URL_PREFIX;
+  Resource getResource(String location);
+  //获得类加载器
+  @Nullable
+	ClassLoader getClassLoader();
+}
+```
+
+**DefaultResourceLoader**
+
+```java
+public class DefaultResourceLoader implements ResourceLoader {
+  //如果没有找到 Resource 对象，则继续判断 location 参数的前缀，如果以 / 开头，则调用 getResourceByPath 方法来获取 Resource 对象。如果以 classpath: 开头，则使用 ClassPathResource 来获取 Resource 对象。如果以上两种情况都不满足，则尝试将 location 参数解析为URL，并使用 FileUrlResource 或 UrlResource 来获取 Resource 对象。 
+  @Override
+	public Resource getResource(String location) {
+		Assert.notNull(location, "Location must not be null");
+    // `ProtocolResolver` 是一个接口，用于解析指定协议的资源。它定义了一个方法 `resolve` ，该方法接受一个资源位置和一个 `ResourceLoader` 对象，并返回一个 `Resource` 对象，表示指定位置的资源。 `ProtocolResolver` 的实现类可以解析各种协议的资源，例如 `http` 、 `ftp` 、 `file` 等。在 `DefaultResourceLoader` 类中，会遍历所有注册的 `ProtocolResolver` 实现类，通过调用 `resolve` 方法来解析指定位置的资源。
+		for (ProtocolResolver protocolResolver : getProtocolResolvers()) {
+			Resource resource = protocolResolver.resolve(location, this);
+			if (resource != null) {
+				return resource;
+			}
+		}
+
+		if (location.startsWith("/")) {
+			return getResourceByPath(location);
+		}
+		else if (location.startsWith(CLASSPATH_URL_PREFIX)) {
+			return new ClassPathResource(location.substring(CLASSPATH_URL_PREFIX.length()), getClassLoader());
+		}
+		else {
+			try {
+				// Try to parse the location as a URL...
+				URL url = new URL(location);
+				return (ResourceUtils.isFileURL(url) ? new FileUrlResource(url) : new UrlResource(url));
+			}
+			catch (MalformedURLException ex) {
+				// No URL -> resolve as resource path.
+				return getResourceByPath(location);
+			}
+		}
+	}
+  
+}
+```
+
+**BeanDefinitionReader**
+
+```java
+public interface BeanDefinitionReader {
+  BeanDefinitionRegistry getRegistry();
+  @Nullable
+	ResourceLoader getResourceLoader();
+  //该方法用于生成bean的名称（为匿名bean）
+  BeanNameGenerator getBeanNameGenerator();
+  //从特定的资源加载bean的定义（返回值是加载到的beanDefinition的数量）
+  int loadBeanDefinitions(Resource resource) throws BeanDefinitionStoreException;
+  //从多个特定的资源加载bean（返回值是加载到的beanDefinition的数量）
+  int loadBeanDefinitions(Resource... resources) throws BeanDefinitionStoreException;
+  //从指定资源的位置加载beanDefinition（返回值是加载到的beanDefinition的数量）
+  int loadBeanDefinitions(String location) throws BeanDefinitionStoreException;
+  //从多个指定资源的位置加载beanDefinition（返回值是加载到的beanDefinition的数量）
+  int loadBeanDefinitions(String... locations) throws BeanDefinitionStoreException;
+  
+}
+```
+
+**AbstractBeanDefinitionReader**
+
+> AbstractBeanDefinitionReader是一个抽象类，它是用来读取和解析Bean定义的。它提供了一些通用的方法和属性，用于从不同的资源（比如XML文件）中读取Bean定义，并将它们解析成BeanDefinition对象。它的具体实现类可以根据需要来选择，比如XmlBeanDefinitionReader用于读取XML文件中的Bean定义，而PropertiesBeanDefinitionReader用于读取Properties文件中的Bean定义等。
+
+```java
+public abstract class AbstractBeanDefinitionReader implements BeanDefinitionReader, EnvironmentCapable {
+  private final BeanDefinitionRegistry registry;
+  @Nullable
+	private ResourceLoader resourceLoader;
+  //  beanClassLoader ：表示当前类的类加载器对象。该变量的类型为 ClassLoader ，并且可以为 null ，即如果未指定，则默认为 null 。该变量的作用是加载该类所依赖的其他类的字节码文件。
+  @Nullable
+	private ClassLoader beanClassLoader;
+//environment ：表示当前类的运行环境。该变量的类型为 Environment ，并且可以为 null ，即如果未指定，则默认为 null 。该变量的作用是提供当前类的配置信息，例如配置文件中的属性值。 
+	private Environment environment;
+//beanNameGenerator ：表示当前类的Bean名称生成器。该变量的类型为 BeanNameGenerator ，并且默认为 DefaultBeanNameGenerator.INSTANCE ，即使用默认的Bean名称生成器。该变量的作用是自动生成Bean的名称，以便在应用程序中使用。
+	private BeanNameGenerator beanNameGenerator = DefaultBeanNameGenerator.INSTANCE;
+  
+  //构造函数
+  protected AbstractBeanDefinitionReader(BeanDefinitionRegistry registry) {
+		Assert.notNull(registry, "BeanDefinitionRegistry must not be null");
+		this.registry = registry;
+		// Determine ResourceLoader to use.
+    //代码判断 registry 对象是否实现了 ResourceLoader 接口。如果是，则将 registry 对象强制转换为 ResourceLoader 类型，并将其赋值给该类的成员变量 resourceLoader
+		if (this.registry instanceof ResourceLoader) {
+			this.resourceLoader = (ResourceLoader) this.registry;
+		}
+		else {
+      //创建一个 PathMatchingResourcePatternResolver 对象，并将其赋值给 resourceLoader 变量。 PathMatchingResourcePatternResolver 是一个用于解析资源路径的类。 
+			this.resourceLoader = new PathMatchingResourcePatternResolver();
+		}
+     //代码判断 registry 对象是否实现了 EnvironmentCapable 接口。如果是，则调用 getEnvironment 方法获取其环境对象，并将其赋值给该类的成员变量 environment 。如果不是，则创建一个 StandardEnvironment 对象，并将其赋值给 environment 变量。 StandardEnvironment 是一个用于表示标准环境的类
+		if (this.registry instanceof EnvironmentCapable) {
+			this.environment = ((EnvironmentCapable) this.registry).getEnvironment();
+		}
+		else {
+			this.environment = new StandardEnvironment();
+		}
+	}
+  @Override
+	public final BeanDefinitionRegistry getRegistry() {
+		return this.registry;
+	}
+  @Override
+	@Nullable
+	public ResourceLoader getResourceLoader() {
+		return this.resourceLoader;
+	}
+}
+```
+
+**XmlBeanDefinitionReader**
+
+```java
+public class XmlBeanDefinitionReader extends AbstractBeanDefinitionReader {
+  //这行代码定义了一个成员变量 `documentReaderClass` ，它是一个 `Class` 对象，表示用于读取Bean定义文档的类。该变量的类型为 `Class<? extends BeanDefinitionDocumentReader>` ，即它是一个泛型类，泛型参数是 `BeanDefinitionDocumentReader` 的子类。默认情况下， `documentReaderClass` 的值是 `DefaultBeanDefinitionDocumentReader.class` ,即使用默认的Bean定义文档读取器类。可以通过更改该变量的值来指定自定义的Bean定义文档读取器类。
+ private Class<? extends BeanDefinitionDocumentReader> documentReaderClass =
+			DefaultBeanDefinitionDocumentReader.class; 
+  public XmlBeanDefinitionReader(BeanDefinitionRegistry registry) {
+		super(registry);
+	}
+  //这段代码是一个方法 `setValidating` ，该方法接受一个布尔类型的参数 `validating` ，用于设置XML文档是否进行验证。如果 `validating` 为 `true` ，则将该类的成员变量 `validationMode` 设置为 `VALIDATION_AUTO` ，否则设置为 `VALIDATION_NONE` 。 `VALIDATION_AUTO` 和 `VALIDATION_NONE` 是该类的常量，分别表示自动验证和不验证。同时，将该类的成员变量 `namespaceAware` 设置为 `!validating` ，即如果进行验证，则启用命名空间感知，否则禁用命名空间感知。
+  public void setValidating(boolean validating) {
+		this.validationMode = (validating ? VALIDATION_AUTO : VALIDATION_NONE);
+		this.namespaceAware = !validating;
+	}
+  	protected int doLoadBeanDefinitions(InputSource inputSource, Resource resource)
+			throws BeanDefinitionStoreException {
+
+		try {
+			Document doc = doLoadDocument(inputSource, resource);
+			int count = registerBeanDefinitions(doc, resource);
+			if (logger.isDebugEnabled()) {
+				logger.debug("Loaded " + count + " bean definitions from " + resource);
+			}
+			return count;
+		}
+		catch (BeanDefinitionStoreException ex) {
+			throw ex;
+		}
+		catch (SAXParseException ex) {
+			throw new XmlBeanDefinitionStoreException(resource.getDescription(),
+					"Line " + ex.getLineNumber() + " in XML document from " + resource + " is invalid", ex);
+		}
+		catch (SAXException ex) {
+			throw new XmlBeanDefinitionStoreException(resource.getDescription(),
+					"XML document from " + resource + " is invalid", ex);
+		}
+		catch (ParserConfigurationException ex) {
+			throw new BeanDefinitionStoreException(resource.getDescription(),
+					"Parser configuration exception parsing XML from " + resource, ex);
+		}
+		catch (IOException ex) {
+			throw new BeanDefinitionStoreException(resource.getDescription(),
+					"IOException parsing XML document from " + resource, ex);
+		}
+		catch (Throwable ex) {
+			throw new BeanDefinitionStoreException(resource.getDescription(),
+					"Unexpected exception parsing XML document from " + resource, ex);
+		}
+}
+```
+
+# 六、实现应用上下文
+
+## 1. 本节重点
+
+随着对Spring框架的深入学习，我们开始接触核心的流程设计和处理部分，其难度与我们把控一个具有复杂需求的研发设计和实现过程是类似的。解决这类复杂场景的设计主要分为—分治、抽象和知识3个方面，运用架构和设计模式的知识，在分治层面将一个大问题分为若干个子问题，而问题越小就越容易被理解和处理。本节将在Spring框架中继续扩展新的功能。例如对一个Bean对象进行定义和实例化的过程中，是否可以满足自定义扩展需求，此时需要引入什么样子的界限上下文，对bean对象执行修改、记录和替换等动作呢？（引入应用上下文，进行资源扫描与加载，为bean对象实例化过程添加扩展机制，运行加载Bean对象和在其实例化前后进行修改和扩展。
+
+## 2. 分治Bean对象功能
+
+如果在工作中开发过基于Spring的技术组件，或者学习过关于SpringBoot中间件的设计和开发等内容，那么一定做过以下内容：继承或者实现了Spring对外暴露的类或接口，在接口的实现中获取BeanFactory及Bean对象等内容，如修改Bean的信息、添加日志打印、处理数据库路由对数据源进行切换、给RFC服务连接注册中心等。在对Bean对象进行实例化的过程中，不仅需要添加扩展机制，还需要优化Spring.xml配置文件的初始化和加载策略（因为不能将面向Spring本身开发的DefaultListableBeanFactory服务直接给用户使用）
+
+![](./img/6-1.jpg)
+
+在目前的Spring框架中，DefaultListableBeanFactory、XmlBeanDefinitionReader是我们对于服务功能进行测试时使用的方法。它们能很好的体现出Spring框架是如何加载XML文件以及注册Bean对象的，但这种方法是面向Spring框架本身的，不具备一定的扩展性，就像需要在Bean初始化过程中完成对Bean的扩展，但是很难做到自动化处理，所以我们需要要将Bean对象的扩展机制功能和对Spring扩展上下文的包装进行整合，一提供完整的服务。
+
+> Spring框架上下文是指Spring框架中的一个容器，它负责管理应用程序中的所有对象。这个容器包含了应用程序中所有的Bean对象，以及它们之间的依赖关系。这样，当应用程序需要使用某个Bean对象时，Spring框架就可以从上下文中获取它，并将它注入到需要它的地方。因此，Spring框架上下文是Spring框架中非常重要的一个概念。
+
+## 3. Bean对象扩展和上下文设计
+
+为了在Bean对象从注入到实例化的过程中执行用户的自定义操作，需要在Bean的定义和初始化过程中插入接口类，这个接口类再由外部实现自己需要的服务事项。再结合Spring框架上下文的应用，就可以满足我们的目标需求。整体架构设计如下图所示：
+
+![](./img/6-2.jpg)
+
+满足Bean对象扩展的BeanFactoryPostProcessor和BeanPostProcessor是Spring框架非常重量级的两个接口，也是使用Spring框架新增开发组建需求的两个必备接口。BeanFactoryPostProcessor接口是由Spring框架组件提供的容器扩展机制，允许在定Bean对象注册后、未实例化之前，修改Bean对象的定义信息BeanDefinition。BeanPostProcessor接口也是Spring提供的扩展机制，不同的是BeanPostProcessor接口是在Bean对象执行初始化方法前后，对Bean对象进行修改、记录和替换。这部分扩展功能与后面AOP的实现有着密切的关系。如果只添加BeanFactoryPostProcessor和BeanPostProcessor这两个接口，不做任何包装，那么使用是非常困难的。我们的目的是开发Spring的上下文类，将相应的XML文件的加载、注册和实例化以及新增的修改和扩展功能全部融合起来，使Spring可以自动扫描到新增的服务，便于用户使用。
+
+## 4. Bean对象扩展和上下文实现
 

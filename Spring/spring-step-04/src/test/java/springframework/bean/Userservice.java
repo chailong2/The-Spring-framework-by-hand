@@ -1,17 +1,9 @@
 package springframework.bean;
 
-public class Userservice {
-    private String name;
-    public Userservice(String name){
-        this.name=name;
-    }
+public class userService {
+    private String uId;
+    private UserDao userDao;
     public void queryUserInfo(){
-        System.out.println("查询用户信息："+name);
-    }
-    @Override
-    public String toString(){
-        final StringBuilder sb=new StringBuilder("");
-        sb.append("").append(name);
-        return sb.toString();
+        System.out.println("查询用户信息："+userDao.queryUserName(uId));
     }
 }

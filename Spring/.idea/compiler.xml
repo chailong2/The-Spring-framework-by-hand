@@ -3,6 +3,7 @@
   <component name="CompilerConfiguration">
     <excludeFromCompile>
       <directory url="file://$PROJECT_DIR$/spring-step-04/src/main/resources/archetype-resources" includeSubdirectories="true" />
+      <directory url="file://$PROJECT_DIR$/spring-step-05/src/main/resources/archetype-resources" includeSubdirectories="true" />
     </excludeFromCompile>
     <annotationProcessing>
       <profile name="Maven default annotation processors profile" enabled="true">
@@ -11,6 +12,7 @@
         <outputRelativeToContentRoot value="true" />
         <module name="spring-step-02" />
         <module name="spring-step-01" />
+        <module name="spring-step-05" />
         <module name="spring-step-04" />
         <module name="spring-step-03" />
       </profile>
