@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<beans>
+    <bean id="userDao" class="springframework.bean.UserDao"></bean>
+    <bean id="userService" class="springframework.bean.userService">
+        <property name="uId" value="10001"></property>
+        <property name="userDao" ref="userDao"></property>
+        <property name="location"  value="深圳"></property>
+        <property name="company" value="腾讯"></property>
+    </bean>
+    <bean class="springframework.common.MyBeanFactoryPostProcessor"></bean>
+    <bean class="springframework.common.MyBeanPostProcessor"></bean>
+</beans>

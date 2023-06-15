@@ -2569,3 +2569,789 @@ public class XmlBeanDefinitionReader extends AbstractBeanDefinitionReader {
 
 ## 4. Bean对象扩展和上下文实现
 
+![](./img/6-3.png)
+
+![](./img/6-4.png)
+
+**定义BeanFactoryPostProcessor接口**
+
+```java
+public interface BeanFactoryPostProcessor {
+    //在所有BeanDefinition加载后，且将Bean对象实例化之前，提供修改BeanDefinition属性的机制
+    void postProcessBeanFactory(ConfigurableBeanFactory beanFactory)throws BeansException;
+}
+```
+
+**定义BeanPostProcessor接口**
+
+```java
+public interface BeanPostProcessor {
+    //在Bean对象执行初始化方法之前，执行此方法
+    Object postProcessBeforeInitialization(Object bean, String beanName)throws BeansException;
+    //在Bean对象执行初始化方法之后，执行此方法
+    Object postProcessAfterInitialization(Object bean, String name)throws  BeansException;
+}
+```
+
+**定义上下文接口**
+
+```java
+public interface ApplicationContext extends ListableBeanFactory {
+}
+```
+
+context是为本次实现应用上下文功能实现而新增的服务包，ApplicationContext继承于ListableBeanFactory，即继承了关于BeanFactory方法getBean的一些方法，由于ApplicationContext本身是接口，但目前不需要添加获取ID和父类上下文的方法，所以暂时没有该接口方法的定义。
+
+```java
+public interface ConfigurableApplicationContext extends ApplicationContext{
+    //刷新容器
+    void refresh() throws BeansException;
+}
+```
+
+ConfigurableApplicationContext继承于ApplicationContext，并提供了核心方法refresh。接下来也需要在上下文的实现过程中刷新容器。
+
+**应用上下文抽象类实现**
+
+```java
+public abstract class AbstractApplicationContext extends DefaultResourceLoader implements ConfigurableApplicationContext {
+    @Override
+    public void refresh() throws BeansException {
+        //1. 创建BeanFactory，并加载BeanDefinition
+         refreshBeanFactory();
+        //2. 获取BeanFactory
+         ConfigurableListableBeanFactory beanFactory=getBeanFactory();
+        //3. 在将Bean对象实例化执行之前，执行BeanFactoryPostProcessor操作
+        invokeBeanFactoryPostProcessor(beanFactory);
+        //4. BeanPostProcessor需要将Bean对象实例化之前注册
+        registerBeanPostProcessor(beanFactory);
+        //5. 提前实例化单例Bean对象
+        beanFactory.preInstantiateSingletons();
+    }
+    protected abstract void refreshBeanFactory() throws BeansException;
+    protected abstract ConfigurableListableBeanFactory getBeanFactory();
+
+    private void invokeBeanFactoryPostProcessor(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+        Map<String, BeanFactoryPostProcessor> beanFactoryPostProcessorMap=beanFactory.getBeansOfType(BeanFactoryPostProcessor.class);
+        for(BeanFactoryPostProcessor beanFactoryPostProcessor:beanFactoryPostProcessorMap.values()){
+            beanFactoryPostProcessor.postProcessBeanFactory(beanFactory);
+        }
+    }
+
+    private void registerBeanPostProcessor(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+        Map<String, BeanPostProcessor> beanPostProcessorMap=beanFactory.getBeansOfType(BeanPostProcessor.class);
+        for(BeanPostProcessor beanPostProcessor: beanPostProcessorMap.values()){
+            beanFactory.addBeanPostProcessor(beanPostProcessor);
+        }
+    }
+    @Override
+    public <T> Map<String, T> getBeansOfType(Class<T> type) throws BeansException {
+        return getBeanFactory().getBeansOfType(type);
+    }
+
+    @Override
+    public Object getBean(String name, Object... args) throws BeansException {
+        return null;
+    }
+
+    @Override
+    public Object getBean(String name) throws BeansException {
+        return null;
+    }
+
+    @Override
+    public <T> T getBean(String name, Class<T> requiredType) throws BeansException {
+        return null;
+    }
+
+    @Override
+    public String[] getBeanDefinitionNames() {
+        return new String[0];
+    }
+}
+```
+
+AbstractApplicationContext继承DefaultResourceLoader接口是为了处理spring.xml文件中配置资源的加载，refresh方法的定义及实现过程如下：
+
+- 创建BeanFactory，并加载BeanDefinition
+- 获取BeanFactory
+- 在将Bean对象实例化之前，执行BeanFactoryPostProcessor方法
+- BeanPostProcessor需要在将Bean对象实例化之前注册
+- 提前实例化单例对象
+- 将定义的抽象方法refreshBeanFactory和getBeanFactory由继承此抽象类的其他抽象类来实现
+
+**获取Bean工厂和加载资源**
+
+```java
+public abstract class AbstractRefreshableApplicationContext extends AbstractApplicationContext {
+    private DefaultListableBeanFactory beanFactory;
+
+    
+    @Override
+    protected  void refreshBeanFactory() throws BeansException{
+        //创建工厂
+        DefaultListableBeanFactory beanFactory=createBeanFactory();
+        //加载BeanDefinition
+        loadBeanDefinitions(beanFactory);
+        this.beanFactory=beanFactory;
+    }
+    private DefaultListableBeanFactory createBeanFactory(){
+        return new DefaultListableBeanFactory();
+    }
+    protected abstract void loadBeanDefinitions(DefaultListableBeanFactory beanFactory);
+    @Override
+    protected ConfigurableListableBeanFactory getBeanFactory() {
+        return beanFactory;
+    }
+}
+```
+
+使用refreshBeanFactory抽象方法可以获取DefaultListableBeanFactory的实例化，以及对资源配置的加载loadBeanDefinitions(BeanFactory)，在加载完成后即可完成对Spring.xml文件中的Bean对象的定义和注册，也实现了BeanFactoryPostProcessor接口、BeanPostProcessor接口对Bean信息的配置。此时的资源加载只定义了一个抽象方法loadBeanDefinitions(BeanFactory)，其余步骤由其它抽象类实现。
+
+**上下文对配置信息的加载**
+
+```java
+public abstract class AbstractXmlApplicationContext extends AbstractRefreshableApplicationContext{
+
+    //DefaultListableBeanFactory继承了BeanDefinitionRegistry接口
+    @Override
+    protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException {
+        XmlBeanDefinitionReader beanDefinitionReader=new XmlBeanDefinitionReader(beanFactory,this);
+        String[] configLocations=getConfigLocations();
+        if(null!=configLocations){
+            beanDefinitionReader.loadBeanDefinitions(configLocations);
+        }
+
+    }
+    protected abstract String[] getConfigLocations();
+}
+```
+
+在AbstractXmlApplicationContext抽象类的loadDefinitions方法中，使用XmlBeanDefinitionReader类来处理XML文件中的配置信息。同时这里又有一个抽象方法getConfigLocations，此方法是为了从入口上下文类中取得配置信息的地址。
+
+**应用上下文实现类（ClasPathXmlApplicationContext）**
+
+```java
+public class ClassPathXmlApplicationContext extends  AbstractXmlApplicationContext{
+    private String[] configLocations;
+    @Override
+    protected String[] getConfigLocations() {
+        return configLocations;
+    }
+    public ClassPathXmlApplicationContext(String configLocations) throws BeansException {
+        this(new String[]{configLocations});
+    }
+    public  ClassPathXmlApplicationContext(){
+    }
+    public ClassPathXmlApplicationContext(String[] configLocations)throws BeansException{
+        this.configLocations=configLocations;
+        refresh();
+    }
+}
+```
+
+ClassPathXmlApplicationContext是对外给用户提供的应用上下文类。在继承了AbstractXmlApplicationContext类及多层抽象类功能后，ClassPathXmlApplicationContext类的实现就相对简单了，主要调用了抽象类中的方法和提供了配置文件的地址信息。
+
+**在创建Bean对象时完成前置和后置处理**
+
+```java
+public abstract class AbstractAutowireCapableBeanFactory extends AbstractBeanFactory implements AutowireCapableBeanFactory {
+    //这里使用cglib的代理方法创建bean实例
+    private InstantiationStrategy instantiationStrategy=new CglibSubclassingInstantiationStrategy();
+    private PropertyValues propertyValues;
+
+    //用来床架bean的函数
+    @Override
+    protected Object createBean(String beanName, BeanDefinition beanDefinition, Object[] args) throws BeansException {
+        Object bean=null;
+        try{
+            bean=ctreatBeanInstance(beanDefinition,beanName,args);
+            //给bean对象填充属性
+            applyPropertyValues(beanName,bean,beanDefinition);
+            //执行Beand对象的初始化方法和BeanPostProcessor接口的前置方法和后置处理方法
+            bean=initializeBean(beanName,bean,beanDefinition);
+        }catch (Exception e){
+            throw new BeansException("Instantiation of bean failed",e);
+        }
+        registerSinleton(beanName,bean);
+        return bean;
+    }
+    private Object initializeBean(String beanName,Object bean, BeanDefinition beanDefinition) throws BeansException {
+        //1. 执行BeanPostProcessor Before前置处理
+        Object wrappedBean=applyBeanPostProcessorsBeforeInitialization(bean,beanName);
+        //2. 待完成的内容
+        invokeInitMethods(beanName,wrappedBean,beanDefinition);
+        //3. 执行BeanPostProcessor After后置处理
+        wrappedBean=applyBeanPostProcessorsAfterInitialization(bean,beanName);
+        return wrappedBean;
+    }
+    private void invokeInitMethods(String beanName,Object wrapperBean, BeanDefinition beanDefinition){
+
+    }
+
+    @Override
+    public Object applyBeanPostProcessorsAfterInitialization(Object existingBean, String beanName) throws BeansException {
+        Object result=existingBean;
+        for(BeanPostProcessor processor :getBeanPostProcessors()){
+            Object current=processor.postProcessBeforeInitialization(result,beanName);
+            if(null==current) return result;
+            result=current;
+        }
+        return result;
+    }
+
+    @Override
+    public Object applyBeanPostProcessorsBeforeInitialization(Object existingBean, String beanName) throws BeansException {
+        Object result=existingBean;
+        for(BeanPostProcessor processor :getBeanPostProcessors()){
+            Object current=processor.postProcessAfterInitialization(result,beanName);
+            if(null==current) return result;
+            result=current;
+        }
+        return result;
+    }
+
+    protected Object ctreatBeanInstance(BeanDefinition beanDefinition, String beanName, Object[] args) throws BeansException {
+        Constructor constructorToUser=null;
+        Class<?> beanClass=beanDefinition.getBeanClass();
+        Constructor<?>[] declaredConstructors=beanClass.getDeclaredConstructors();
+        for (Constructor<?> declaredConstructor : declaredConstructors) {
+            if(args!=null && declaredConstructor.getParameterTypes().length==args.length)
+            {
+                constructorToUser=declaredConstructor;
+                break;
+            }
+        }
+        return  getInstantiationStrategy().instatiate(beanDefinition,beanName,constructorToUser,args);
+    }
+    //该方法用于给Bean对象填充属性
+    protected  void applyPropertyValues(String beanName, Object bean , BeanDefinition beanDefinition){
+        try{
+            //或的bean的属性集合
+            PropertyValues propertyValues = beanDefinition.getPropertyValues();
+            for (PropertyValue propertyValue : propertyValues.getPropertyValues()) {
+                //取出属性名和属性值
+                String name=propertyValue.getName();
+                Object value=propertyValue.getValue();
+                if(value instanceof BeanReference){
+                    //例如A依赖B，获取B的实例化对象
+                    BeanReference beanReference=(BeanReference) value;
+                    value=getBean(beanReference.getBeanName());
+                }
+                //属性填充
+                BeanUtil.setFieldValue(bean,name,value);
+            }
+        } catch (Exception | BeansException e) {
+            throw new BeanException("Error setting property values："+beanName);
+        }
+    }
+    public InstantiationStrategy getInstantiationStrategy(){
+        return instantiationStrategy;
+    }
+    public void setInstantiationStrategy(InstantiationStrategy instantiationStrategy){
+        this.instantiationStrategy=instantiationStrategy;
+    }
+}
+```
+
+当实现BeanPostProcessor接口后，会涉及两个接口方法—postProcessBeforeInitialization，postProcessorAfterInitialization，分别用于进行Bean对象执行初始化前和初始化后的处理。也就是说在创建Bean对象时，在createBean方法中添加了initializeBean(beanName, bean,BeanDefinition)，而这个操作主要是使用applyBeanPostProcessorBeforeInitialization方法和applyPostPorcessorAfterInitialization方法实现的。此外applyBeanPostProcessorBeforeInitialization方法和applyPostPorcessorAfterInitialization方法是在AutowireCapableBeanFactory接口类中新增的两个方法。
+
+**测试**
+
+- 事先准备
+
+```java
+public class UserDao {
+    private static Map<String,String> hashmap=new HashMap<>();
+    static {
+        hashmap.put("10001","张三");
+        hashmap.put("10002","李四");
+        hashmap.put("10003","王五");
+    }
+    public String queryUserName(String uId){
+        return hashmap.get(uId);
+    }
+}
+```
+
+```java
+public class userService {
+    private String uId;
+    private String company;
+    private String location;
+    private UserDao userDao;
+    public void queryUserInfo(){
+        System.out.println("用户姓名："+userDao.queryUserName(uId));
+        System.out.println("用户公司："+company);
+        System.out.println("用户ID："+uId);
+        System.out.println("用户地址："+location);
+    }
+
+    public String getuId() {
+        return uId;
+    }
+
+    public void setuId(String uId) {
+        this.uId = uId;
+    }
+
+    public UserDao getUserDao() {
+        return userDao;
+    }
+
+    public void setUserDao(UserDao userDao) {
+        this.userDao = userDao;
+    }
+
+    public String getCompany() {
+        return company;
+    }
+
+    public void setCompany(String company) {
+        this.company = company;
+    }
+
+    public String getLocation() {
+        return location;
+    }
+
+    public void setLocation(String location) {
+        this.location = location;
+    }
+}
+```
+
+这里新增类company和location两个属性信息，用于测试BeanPostProcessor和BeanFactoryPostPorcessor两个接口对Bean属性信息的扩展功能
+
+- 实现BeanPostProcessor类和BeanFactoryPostProcessor类
+
+```java
+public class MyBeanPostProcessor implements BeanPostProcessor {
+
+    @Override
+    public Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+        if("userService".equals(beanName)){
+            userService userService2=(userService) bean;
+            userService2.setLocation("改为北京");
+        }
+        return bean;
+    }
+
+    @Override
+    public Object postProcessAfterInitialization(Object bean, String name) throws BeansException {
+        
+        return bean;
+    }
+}
+
+```
+
+```java
+public class MyBeanFactoryPostProcessor implements BeanFactoryPostProcessor {
+
+    @Override
+    public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException {
+        BeanDefinition beanDefinition=beanFactory.getBeanDefinition("userService");
+        PropertyValues propertyValues=beanDefinition.getPropertyValues();
+        propertyValues.addPropertyValue(new PropertyValue("company","改为：字节跳动"));
+    }
+}
+```
+
+如果在Spring中进行过一些组件的开发，那么一定非常属性BeanPostProcessor和BeanFactoryPostProcessor这两个类。该测试主要是实现这两个类，并对实例化过程中Bean对象完成某些操作。
+
+- 配置文件
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<beans>
+    <bean id="userDao" class="springframework.bean.UserDao"></bean>
+    <bean id="userService" class="springframework.bean.userService">
+        <property name="uId" value="10001"></property>
+        <property name="userDao" ref="userDao"></property>
+        <property name="location"  value="深圳"></property>
+        <property name="company" value="腾讯"></property>
+    </bean>
+    <bean class="springframework.common.MyBeanFactoryPostProcessor"></bean>
+    <bean class="springframework.common.MyBeanPostProcessor"></bean>
+</beans>
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8" ?>
+<beans>
+    <bean id="userDao" class="springframework.bean.UserDao"></bean>
+    <bean id="userService" class="springframework.bean.userService">
+        <property name="uId" value="10001"></property>
+        <property name="userDao" ref="userDao"></property>
+        <property name="location"  value="深圳"></property>
+        <property name="company" value="腾讯"></property>
+    </bean>
+</beans>
+```
+
+这里提供两个配置文件，一个是不包含BeanFactoryPostProcessor和BeanPostProcessor实现类的基础配置文件，另一个是包含两者的增强配置文件。之所以这样配置，主要是对比验证运用或不运用Spring新增的应用上下文，它们都是怎么实现的
+
+- 不使用应用上下文
+
+```java
+public class ApiTest {
+    @Test
+    public void test_xml() throws BeansException {
+        //初始化BeanFactory接口
+        DefaultListableBeanFactory beanFactory=new DefaultListableBeanFactory();
+        //读取配置文件注册bean对象
+        XmlBeanDefinitionReader reader=new XmlBeanDefinitionReader(beanFactory);
+        reader.loadBeanDefinitions("classpath:spring2.xml");
+        //BeanDefinition加载完成，在将Bean对象实例化之前，修改BeanDefintion的属性值
+        MyBeanFactoryPostProcessor beanPostProcessor=new MyBeanFactoryPostProcessor();
+        beanPostProcessor.postProcessBeanFactory(beanFactory);
+        //获取bean对象的调用方法
+        userService userService= (userService) beanFactory.getBean("userService",userService.class);
+        userService.queryUserInfo();
+    }
+}
+```
+
+![](./img/6-5.png)
+
+> 可以发现确实使用beanPostProcessor方法对用户的BeanDefinition进行了修改
+
+- 使用应用上下文
+
+```java
+  @Test
+    public void test_xml2() throws BeansException {
+        //初始化BeanFactory接口
+        ClassPathXmlApplicationContext applicationContext=new ClassPathXmlApplicationContext("classpath:spring2.xml");
+        //获取bean对象的调用方法
+        userService userService1= applicationContext.getBean("userService",userService.class);
+        userService1.queryUserInfo();
+    }
+```
+
+![image-20230615103835707](/Users/jackchai/Library/Application Support/typora-user-images/image-20230615103835707.png)
+
+从测试结果可以看出来，此次的测试结果与不使用应用上下文的测试结果是一致的，但是，使用该方法更简单。
+
+## 5. Spring相关源码解析
+
+**BeanFactoryPostProcessor**
+
+> `BeanFactoryPostProcessor`是Spring框架中的一个接口，用于在Spring容器**实例化**Bean之前对Bean定义进行修改或处理。其作用是允许开发人员在Spring容器实例化Bean之前，通过自定义的后处理器对Bean的定义进行修改。它可以用于对Bean定义的属性进行修改、添加新的Bean定义或者对现有的Bean定义进行删除
+
+```java
+//该注解表示函数式接口，即允许使用lambda表达式
+@FunctionalInterface
+public interface BeanFactoryPostProcessor {
+	void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) throws BeansException;
+}
+```
+
+**BeanPostProcessor**
+
+> `BeanPostProcessor`是Spring框架中的一个接口，用于在Spring容器实例化Bean之后和依赖注入之前对Bean进行自定义的处理或修改,其作用是允许开发人员在Spring容器实例化Bean之后，在Bean的初始化过程中对Bean进行自定义的操作。通过实现`BeanPostProcessor`接口并实现其中的`postProcessBeforeInitialization`和`postProcessAfterInitialization`方法，可以在Bean的初始化过程中插入自定义的逻辑
+
+```java
+public interface BeanPostProcessor {
+	@Nullable
+	default Object postProcessBeforeInitialization(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+	@Nullable
+	default Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+		return bean;
+	}
+}
+```
+
+**ConfigurableApplicationContext**
+
+> `ConfigurableApplicationContext`接口是Spring框架中的一个核心接口，它继承自`ApplicationContext`接口，并且提供了一些额外的配置和管理应用上下文的方法。该接口的主要作用是允许应用程序在运行时对应用上下文进行配置和自定义。以下是`ConfigurableApplicationContext`接口的主要功能和作用：
+>
+> 1. 应用上下文的配置：`ConfigurableApplicationContext`接口允许开发人员在创建应用上下文之前进行一些配置操作。例如，可以通过设置配置文件的位置、设置激活的配置文件或配置文件的属性来自定义应用上下文的行为。
+> 2. 生命周期管理：该接口提供了一些方法来管理应用上下文的生命周期。开发人员可以使用这些方法手动启动、停止或刷新应用上下文。例如，可以调用`refresh()`方法来刷新应用上下文，或调用`start()`方法来启动应用上下文中的所有组件。
+> 3. Bean工厂访问：`ConfigurableApplicationContext`接口扩展了`ListableBeanFactory`接口，因此它提供了访问应用上下文中的Bean工厂的能力。可以使用该接口提供的方法来获取应用上下文中定义的Bean、获取Bean的数量、按类型查找Bean等。
+> 4. 环境配置：应用上下文的环境配置是通过`ConfigurableApplicationContext`接口来实现的。可以使用该接口提供的方法来获取和设置应用上下文的环境属性。例如，可以获取当前环境的活动配置文件、设置默认的配置文件等。
+>
+> 总之，`ConfigurableApplicationContext`接口提供了一些配置和管理应用上下文的方法，使开发人员能够更灵活地配置和自定义Spring应用程序的上下文环境。
+
+```java
+public interface ConfigurableApplicationContext extends ApplicationContext, Lifecycle, Closeable {
+  //设置应用程序上下的id
+  void setId(String id);
+  //设置父应用程序上下文
+  void setParent(@Nullable ApplicationContext parent);
+  //设置应用程序上下文的环境
+  void setEnvironment(ConfigurableEnvironment environment);
+  //返回应用程序上下文所在环境的配置
+  @Override
+	ConfigurableEnvironment getEnvironment();
+  //添加BeanDefinition后处理器（用来修改BeanDefinition的定义信息）
+  void addBeanFactoryPostProcessor(BeanFactoryPostProcessor postProcessor);
+  //刷新应用程序上下文
+  void refresh() throws BeansException, IllegalStateException;
+}
+```
+
+**AbstractApplicationContext**
+
+> `AbstractApplicationContext`是Spring框架中的一个抽象类，它实现了`ConfigurableApplicationContext`接口，并提供了一些通用的功能和默认的实现。该类的作用是作为其他具体应用上下文类的基类，提供了应用上下文的核心功能和生命周期管理。
+
+```java
+public abstract class AbstractApplicationContext extends DefaultResourceLoader
+		implements ConfigurableApplicationContext {
+  @Override
+	public void refresh() throws BeansException, IllegalStateException {
+    //使用对象级别的锁来确保在多线程环境下只有一个线程可以执行刷新操作
+		synchronized (this.startupShutdownMonitor) {
+      //这行代码使用Spring的启动步骤跟踪器创建一个新的启动步骤，表示正在进行上下文刷新
+			StartupStep contextRefresh = this.applicationStartup.start("spring.context.refresh");
+      // 这是一个空方法，用于在实际的刷新操作之前执行一些准备工作
+			prepareRefresh();
+      //获取一个新的、可配置的Bean工厂。具体实现可能会创建一个新的Bean工厂实例，并加载和解析配置文件中的Bean定义。
+			ConfigurableListableBeanFactory beanFactory = obtainFreshBeanFactory();
+      //在Bean工厂准备就绪之后，对Bean工厂进行一些必要的预处理操作。例如，设置Bean的类加载器、属性编辑器等
+			prepareBeanFactory(beanFactory);
+			try {
+        //对Bean工厂进行后置处理，允许在实际的Bean实例化之前对Bean工厂进行自定义修改
+				postProcessBeanFactory(beanFactory);
+        //创建一个新的启动步骤，表示正在执行Bean工厂的后置处理
+				StartupStep beanPostProcess = this.applicationStartup.start("spring.context.beans.post-process");
+        //调用Bean工厂后置处理器，以允许它们修改Bean工厂的配置和Bean定义。这些处理器可以用于添加、修改或删除Bean定义
+				invokeBeanFactoryPostProcessors(beanFactory);
+        //注册Bean的后置处理器。在该方法中，注册并初始化Bean后置处理器，用于在Bean实例化和初始化过程中进行拦截和自定义处理
+				registerBeanPostProcessors(beanFactory);
+        //结束Bean后置处理的启动步骤
+				beanPostProcess.end();
+        //初始化消息源
+				initMessageSource();
+        //初始化应用程序事件广播器。在该方法中，初始化应用程序的事件广播器，用于发布和监听应用程序的事件
+				initApplicationEventMulticaster();
+        //执行刷新操作的回调方法。在该方法中，留给子类进行特定的刷新操作
+				onRefresh();
+        //注册事件监听器。在该方法中，注册应用程序定义的事件监听器
+				registerListeners();
+        //完成Bean工厂的初始化。在该方法中，实例化和初始化所有非延迟加载的单例Bean
+				finishBeanFactoryInitialization(beanFactory);
+        //完成刷新操作。在该方法中，进行一些刷新完成后的清理工作
+				finishRefresh();
+			}
+			catch (BeansException ex) {
+				if (logger.isWarnEnabled()) {
+					logger.warn("Exception encountered during context initialization - " +
+							"cancelling refresh attempt: " + ex);
+				}
+				destroyBeans();
+				cancelRefresh(ex);
+				throw ex;
+			}
+			finally {
+        //重置常用缓存。在该方法中，重置一些常用的缓存，以便下一次的刷新操作
+				resetCommonCaches();
+        //结束应用程序刷新的启动步骤
+				contextRefresh.end();
+			}
+		}
+	}
+  protected void prepareRefresh() {
+		//记录启动的时间
+		this.startupDate = System.currentTimeMillis();
+		this.closed.set(false);
+		this.active.set(true);
+		if (logger.isDebugEnabled()) {
+			if (logger.isTraceEnabled()) {
+				logger.trace("Refreshing " + this);
+			}
+			else {
+				logger.debug("Refreshing " + getDisplayName());
+			}
+		}
+		initPropertySources();
+		getEnvironment().validateRequiredProperties();
+		if (this.earlyApplicationListeners == null) {
+			this.earlyApplicationListeners = new LinkedHashSet<>(this.applicationListeners);
+		}
+		else {
+			this.applicationListeners.clear();
+			this.applicationListeners.addAll(this.earlyApplicationListeners);
+		}
+		this.earlyApplicationEvents = new LinkedHashSet<>();
+	}
+  //这段代码的主要作用是执行注册的Bean工厂后置处理器，并在必要时为Bean工厂设置临时类加载器以支持加载时织入。后置处理器可以在应用上下文刷新过程中对Bean工厂进行进一步的处理和修改，以满足特定的需求和定制化操作
+  protected void invokeBeanFactoryPostProcessors(ConfigurableListableBeanFactory beanFactory) {
+    //该方法用于执行所有注册的BeanFactory后置处理器
+		PostProcessorRegistrationDelegate.invokeBeanFactoryPostProcessors(beanFactory, getBeanFactoryPostProcessors());
+    //判断条件，如果不是在本地镜像环境（即非本地编译环境）并且Bean工厂的临时类加载器为null并且Bean工厂包含名为LOAD_TIME_WEAVER_BEAN_NAME的Bean
+		if (!IN_NATIVE_IMAGE && beanFactory.getTempClassLoader() == null && beanFactory.containsBean(LOAD_TIME_WEAVER_BEAN_NAME)) {
+			beanFactory.addBeanPostProcessor(new LoadTimeWeaverAwareProcessor(beanFactory));
+			beanFactory.setTempClassLoader(new ContextTypeMatchClassLoader(beanFactory.getBeanClassLoader()));
+		}
+    protected void registerBeanPostProcessors(ConfigurableListableBeanFactory beanFactory) {
+		PostProcessorRegistrationDelegate.registerBeanPostProcessors(beanFactory, this);
+	}
+}
+```
+
+**AbstractRefreshableApplicationContext**
+
+> `AbstractRefreshableApplicationContext`类是Spring框架中的一个抽象类，扩展自`AbstractApplicationContext`类，用于创建可刷新的应用上下文。该类提供了应用上下文的刷新和重载能力，并定义了可刷新应用上下文的基本行为
+
+```java
+public abstract class AbstractRefreshableApplicationContext extends AbstractApplicationContext {
+  //判断是否允许BeanDefinition是否能够重写
+  @Nullable
+	private Boolean allowBeanDefinitionOverriding;
+  //判断是否循环引用
+	@Nullable
+	private Boolean allowCircularReferences;
+  //定义工厂DefaultListableBeanFactory，volatile关键字并不能保证原子性。它只能确保可见性和有序性，但不能解决多个线程同时对变量进行读写导致的竞态条件
+	@Nullable
+	private volatile DefaultListableBeanFactory beanFactory;
+  @Override
+	protected final void refreshBeanFactory() throws BeansException {
+    //检查当前应用上下文是否已经有了Bean工厂。如果有，表示之前已经刷新过了，需要先销毁原有的Bean工厂和相关的Bean
+		if (hasBeanFactory()) {
+      //销毁所有的Bean实例。在该方法中，会调用Bean工厂的destroySingletons()方法，销毁所有的单例Bean
+			destroyBeans();
+      //关闭Bean工厂。在该方法中，会执行一些清理操作，释放Bean工厂相关的资源
+			closeBeanFactory();
+		}
+		try {
+      //创建Bean工厂
+			DefaultListableBeanFactory beanFactory = createBeanFactory();
+      //设置Bean工厂的序列化ID。该ID用于标识当前应用上下文的唯一性
+			beanFactory.setSerializationId(getId());
+      //自定义Bean工厂。在该方法中，可以根据需要对新创建的Bean工厂进行自定义操作
+			customizeBeanFactory(beanFactory);
+      //加载Bean定义。在该方法中，会根据配置文件的位置和其他来源加载和解析Bean定义，将它们注册到Bean工厂中
+			loadBeanDefinitions(beanFactory);
+			this.beanFactory = beanFactory;
+		}
+		catch (IOException ex) {
+			throw new ApplicationContextException("I/O error parsing bean definition source for " + getDisplayName(), ex);
+		}
+	}
+  protected final boolean hasBeanFactory() {
+		return (this.beanFactory != null);
+	}
+  	protected void customizeBeanFactory(DefaultListableBeanFactory beanFactory) {
+		if (this.allowBeanDefinitionOverriding != null) {
+			beanFactory.setAllowBeanDefinitionOverriding(this.allowBeanDefinitionOverriding);
+		}
+		if (this.allowCircularReferences != null) {
+			beanFactory.setAllowCircularReferences(this.allowCircularReferences);
+		}
+	}
+  protected abstract void loadBeanDefinitions(DefaultListableBeanFactory beanFactory)
+			throws BeansException, IOException;
+}
+}
+```
+
+**AbstractXmlApplicationContext**
+
+> `AbstractXmlApplicationContext`是Spring框架中的一个抽象类，用于实现基于XML配置文件的应用上下文。它扩展了`AbstractRefreshableApplicationContext`类，提供了加载和解析XML配置文件的功能，并创建相应的Bean实例
+
+```java
+public abstract class AbstractXmlApplicationContext extends AbstractRefreshableConfigApplicationContext {
+  @Override
+	protected void loadBeanDefinitions(DefaultListableBeanFactory beanFactory) throws BeansException, IOException {
+    //创建一个XmlBeanDefinitionReader实例，传入beanFactory作为参数。XmlBeanDefinitionReader是用于读取和解析XML格式的Bean定义的类。
+		XmlBeanDefinitionReader beanDefinitionReader = new XmlBeanDefinitionReader(beanFactory);
+    //设置XmlBeanDefinitionReader的环境属性
+		beanDefinitionReader.setEnvironment(this.getEnvironment());
+    //设置XmlBeanDefinitionReader的资源加载器。这里将应用上下文自身作为资源加载器，以便在加载Bean定义时可以使用应用上下文的资源加载能力
+		beanDefinitionReader.setResourceLoader(this);
+    //设置XmlBeanDefinitionReader的实体解析器
+		beanDefinitionReader.setEntityResolver(new ResourceEntityResolver(this));
+    //初始化XmlBeanDefinitionReader。在该方法中，可以对XmlBeanDefinitionReader进行进一步的初始化或配置操作，例如设置验证模式、设置XML解析器等
+		initBeanDefinitionReader(beanDefinitionReader);
+    //使用XmlBeanDefinitionReader加载Bean定义。该方法将使用XmlBeanDefinitionReader从配置的资源中加载和解析Bean定义，并将它们注册到提供的beanFactory中
+		loadBeanDefinitions(beanDefinitionReader);
+	}
+  	protected void initBeanDefinitionReader(XmlBeanDefinitionReader reader) {
+		reader.setValidating(this.validating);
+	}
+  protected void loadBeanDefinitions(XmlBeanDefinitionReader reader) throws BeansException, IOException {
+		Resource[] configResources = getConfigResources();
+		if (configResources != null) {
+			reader.loadBeanDefinitions(configResources);
+		}
+		String[] configLocations = getConfigLocations();
+		if (configLocations != null) {
+			reader.loadBeanDefinitions(configLocations);
+		}
+	}
+  @Nullable
+	protected Resource[] getConfigResources() {
+		return null;
+	}
+}
+```
+
+**ClassPathXmlApplicationContext**
+
+> 它的主要作用是基于类路径下的XML配置文件创建应用上下文，并加载和解析其中的Bean定义。
+
+```java
+public class ClassPathXmlApplicationContext extends AbstractXmlApplicationContext {
+  //用来记录XML文件的地址
+  @Nullable
+	private Resource[] configResources;
+  public ClassPathXmlApplicationContext() {
+	}
+  public ClassPathXmlApplicationContext(ApplicationContext parent) {
+		super(parent);
+	}
+  public ClassPathXmlApplicationContext(String configLocation) throws BeansException {
+		this(new String[] {configLocation}, true, null);
+	}
+  public ClassPathXmlApplicationContext(String... configLocations) throws BeansException {
+		this(configLocations, true, null);
+	}
+  public ClassPathXmlApplicationContext(String[] configLocations, @Nullable ApplicationContext parent)
+			throws BeansException {
+
+		this(configLocations, true, parent);
+	}
+  public ClassPathXmlApplicationContext(String[] configLocations, boolean refresh) throws BeansException {
+		this(configLocations, refresh, null);
+	}
+  	public ClassPathXmlApplicationContext(
+			String[] configLocations, boolean refresh, @Nullable ApplicationContext parent)
+			throws BeansException {
+
+		super(parent);
+		setConfigLocations(configLocations);
+		if (refresh) {
+			refresh();
+		}
+	}
+  public ClassPathXmlApplicationContext(String path, Class<?> clazz) throws BeansException {
+		this(new String[] {path}, clazz);
+	}
+  	public ClassPathXmlApplicationContext(String[] paths, Class<?> clazz, @Nullable ApplicationContext parent)
+			throws BeansException {
+
+		super(parent);
+		Assert.notNull(paths, "Path array must not be null");
+		Assert.notNull(clazz, "Class argument must not be null");
+		this.configResources = new Resource[paths.length];
+		for (int i = 0; i < paths.length; i++) {
+			this.configResources[i] = new ClassPathResource(paths[i], clazz);
+		}
+		refresh();
+	}
+	@Override
+	@Nullable
+	protected Resource[] getConfigResources() {
+		return this.configResources;
+	}
+}
+```
+
+
+
+
+
