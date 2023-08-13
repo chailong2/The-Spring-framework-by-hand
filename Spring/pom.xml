@@ -15,6 +15,18 @@
         <module>spring-step-04</module>
         <module>spring-step-05</module>
         <module>spring-step-06</module>
+        <module>spring-step-07</module>
+        <module>spring-step-08</module>
+        <module>spring-step-09</module>
+        <module>spring-step-10</module>
+        <module>spring-step-11</module>
+        <module>spring-step-12</module>
+        <module>spring-step-13</module>
+        <module>spring-step-14</module>
+        <module>spring-step-15</module>
+        <module>spring-step-16</module>
+        <module>spring-step-17</module>
+        <module>spring-step-18</module>
     </modules>
 
     <properties>
@@ -24,6 +36,10 @@
         <junit.version>4.13.2</junit.version>
         <cglib.version>2.2.2</cglib.version>
         <hutool.version>5.8.9</hutool.version>
+        <commons-lang.version>3.12.0</commons-lang.version>
+        <openjdk.version>0.14</openjdk.version>
+        <aspectJ.version>1.9.9.1</aspectJ.version>
+        <Aop.version>5.3.9</Aop.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -42,6 +58,26 @@
                 <groupId>cn.hutool</groupId>
                 <artifactId>hutool-all</artifactId>
                 <version>${hutool.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>${commons-lang.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.openjdk.jol</groupId>
+                <artifactId>jol-core</artifactId>
+                <version>${openjdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.aspectj</groupId>
+                <artifactId>aspectjweaver</artifactId>
+                <version>${aspectJ.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-aop</artifactId>
+                <version>${Aop.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
